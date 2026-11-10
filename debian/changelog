@@ -1,3 +1,22 @@
+linuxmuster-linbo7 (1:7.4.21~edu) lmn74; urgency=low
+
+  * edulution fork. The package keeps its upstream name, so the epoch 1: is
+    what makes it win against the same package from deb.linuxmuster.net.
+  * e version carries the suffix ~edu on top of the epoch, so apt policy,
+    dpkg -l and the motd show at a glance that this is the edulution build
+    and not the upstream package. "~" sorts before the empty string, so
+    1:7.4.21~edu stays below a hypothetical 1:7.4.21 while still outranking
+    every upstream 7.x, which carries no epoch at all.
+  * build/config/build.env strips the epoch from LINBOVERSION before it is
+    written to /etc/linbo-version, where a colon separates version and
+    release name. This keeps all three parsers of that file working. The
+    ~edu suffix is kept, so LINBO clients show "LINBO 7.4.21~edu" on the
+    splash screen and in linbo_version.
+  * Release workflow publishes to edulution-io/edulution-package-server
+    instead of linuxmuster/deb, into the Ubuntu codename resolute.
+
+ -- Lukas Lukic-Spitznagel <lukas.spitznagel@netzint.de>  Fri, 13 Nov 2026 12:00:00 +0100
+
 linuxmuster-linbo7 (7.4.21) lmn74; urgency=low
 
   * fix(rsync-post-upload): drop the dead empty-BAKDIR cleanup after a
