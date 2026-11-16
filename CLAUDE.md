@@ -329,3 +329,12 @@ sudo apt install dpkg-dev
 ```
 
 **Recommended**: Use [lmndev-runner](https://github.com/linuxmuster/lmndev-runner) for isolated, reproducible builds.
+
+## Commits and file headers (edulution-io fork)
+
+In the edulution-io fork neither a commit nor a file needs a sign-off:
+
+- Commits carry no `Signed-off-by:` trailer.
+- New files carry no `# Signed-off by` or `# Assisted by` lines in their header. Headers that already have them stay as they are.
+
+Upstream linuxmuster still asks for both, so a change meant for upstream gets them added when it is sent there.
