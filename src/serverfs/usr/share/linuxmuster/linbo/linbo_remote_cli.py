@@ -348,7 +348,10 @@ def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False, run_user=No
             f.write(script_text)
         os.chmod(script_path, 0o755)
 
-        lib.linkLatestRunLog(environment.LINBOLOGDIR, host, logfile)
+        try:
+            lib.linkLatestRunLog(environment.LINBOLOGDIR, host, logfile)
+        except OSError as error:
+            print(f'Warning: could not link the latest log of {host}: {error}', file=sys.stderr)
 
         subprocess.run(
             [
