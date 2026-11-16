@@ -25,7 +25,10 @@ from linbo_remote_lib import (
     LinboRemoteError,
     RUN_RECORD_BASENAME,
     buildOnbootCmds,
+    RUN_RECORD_VERSION,
     buildRunRecordPrefix,
+    isoTimestamp,
+    newRunId,
     pruneRunLogs,
     getMacFromAd,
     getIpFromAd,
@@ -471,6 +474,7 @@ def test_resolve_wol_target_falls_back_to_dhcp_lease_when_ad_mac_invalid():
 # --- per-run record (JSON line appended by the remote script) ----------------
 
 STARTED = time.strptime('20261001120530', '%Y%m%d%H%M%S')
+ISO_WITH_COLON_OFFSET = r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d'
 
 
 def test_run_record_prefix_is_open_json_object():
@@ -483,6 +487,39 @@ def test_run_record_prefix_is_open_json_object():
     assert record['dry_run'] is False
     assert record['log'] == '/log/x.log'
     assert record['start'].startswith('2026-10-01T12:05:30')
+    assert re.fullmatch(ISO_WITH_COLON_OFFSET, record['start'])
+
+
+def test_run_record_prefix_carries_schema_version_run_id_and_user():
+    prefix = buildRunRecordPrefix('r100-pc01', ['sync:1'], STARTED, '/log/x.log',
+                                  run_id='20261001120530-4711', user='alice')
+    record = json.loads(prefix + '}')
+    assert record['v'] == RUN_RECORD_VERSION == 1
+    assert record['run_id'] == '20261001120530-4711'
+    assert record['user'] == 'alice'
+
+
+def test_run_record_prefix_without_run_id_and_user_has_nulls():
+    record = json.loads(buildRunRecordPrefix('r100-pc01', ['sync:1'], STARTED, '/log/x.log') + '}')
+    assert record['run_id'] is None
+    assert record['user'] is None
+
+
+def test_iso_timestamp_has_a_colon_in_the_offset():
+    assert re.fullmatch(ISO_WITH_COLON_OFFSET, isoTimestamp(STARTED))
+    assert isoTimestamp(STARTED).startswith('2026-10-01T12:05:30')
+
+
+def test_run_id_combines_start_time_and_pid():
+    assert newRunId(STARTED, 4711) == '20261001120530-4711'
+    assert newRunId(STARTED, 4711) != newRunId(STARTED, 4712)
+
+
+def test_render_remote_script_records_end_time_as_iso_with_colon_offset():
+    script = renderRemoteScript('r100-pc01', ['sync:1'], '/var/tmp/x.sh',
+                                record_file='/log/r.jsonl', record_prefix='{"a":1')
+    assert 'date -Iseconds' in script
+    assert '%z' not in script
 
 
 def test_render_remote_script_without_record_has_no_trap():
@@ -532,7 +569,7 @@ def test_run_record_written_on_success(monkeypatch, tmp_path):
     record = json.loads(lines[0])
     assert record['rc'] == 0
     assert record['commands'] == ['sync:1']
-    assert re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4}', record['end'])
+    assert re.fullmatch(ISO_WITH_COLON_OFFSET, record['end'])
 
 
 @needs_bash_flock

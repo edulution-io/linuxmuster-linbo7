@@ -115,7 +115,10 @@ Parameter  |  Description
   ```
 * The option `-c` now disables the gui by default during command execution. 
 * The new option `-a` allows to attach a host's tmux session.
-* Every `-c` run writes its own log `<hostname>_linbo-remote_<YYYYmmddHHMMSS>.log` and appends one JSON line (hostname, mode, commands, dry_run, start, end, rc, log) to `linbo-remote_runs.jsonl`, both in `/var/log/linuxmuster/linbo/`.
+* Every `-c` run writes its own log `<hostname>_linbo-remote_<YYYYmmddHHMMSS>.log` and appends one JSON line (v, run_id, user, hostname, mode, commands, dry_run, start, log, end, rc) to `linbo-remote_runs.jsonl`, both in `/var/log/linuxmuster/linbo/`.
+  * `v` is the schema version (1). `run_id` is the same for all host lines of one `linbo-remote` invocation, so a room or group run can be shown as one run. `user` is the `--run-user` value, otherwise `SUDO_USER` or `USER`, or `null`.
+  * `start` and `end` are ISO 8601 with a colon offset, e.g. `2026-10-01T12:05:30+02:00`.
+  * `rc` is the exit status of the remote script. For a backgrounded `start`, `reboot`, `halt` or `poweroff`, `0` only means the command was dispatched. A run ended by a signal is recorded with 128 plus the signal number (129, 130, 143).
 * New in 7.4.21: `image_name:<name>` creates and uploads a base image under a new name, see [Images under a new name](#images-under-a-new-name):
   ```
   linbo-remote -i <hostname> -c image_name:<name>,create_image:<#>,upload_image:<#>
