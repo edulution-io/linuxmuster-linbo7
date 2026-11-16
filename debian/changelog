@@ -1,3 +1,14 @@
+linuxmuster-linbo7 (1:7.4.21~edu1) lmn74; urgency=medium
+
+  * Depend on edulution-linbo-gui7 instead of the virtual
+    linuxmuster-linbo-gui7. A server upgraded from deb.linuxmuster.net kept
+    the upstream linuxmuster-linbo-gui7, which satisfied the virtual
+    dependency, so the edulution GUI never arrived there. apt now installs
+    edulution-linbo-gui7 and, through its Conflicts/Replaces, removes the
+    upstream GUI in the same run.
+
+ -- Lukas Lukic-Spitznagel <lukas.spitznagel@netzint.de>  Mon, 16 Nov 2026 14:30:00 +0100
+
 linuxmuster-linbo7 (1:7.4.21~edu) lmn74; urgency=low
 
   * edulution fork. The package keeps its upstream name, so the epoch 1: is
