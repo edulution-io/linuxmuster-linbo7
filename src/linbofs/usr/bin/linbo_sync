@@ -223,12 +223,14 @@ set_guid(){
 
 # group_bootfile path [suffix]
 # prints path.$HOSTGROUP[suffix], a group keyed windows boot file stored in the
-# image. Falls back to the plain group name (the part after "<school>+") if
+# image. Falls back to the plain group name (the part after "<school>__") if
 # only that one exists, as in images created before hardware groups of
-# non-default schools became school qualified (#178).
+# non-default schools became school qualified (#178). The separator "__" is
+# LINBO_GROUP_SEPARATOR in linuxmuster-base7 (functions/linbo.py); the shell
+# side cannot import it, keep both in step.
 group_bootfile(){
   local file="$1.$HOSTGROUP$2"
-  local plainfile="$1.${HOSTGROUP#*+}$2"
+  local plainfile="$1.${HOSTGROUP#*__}$2"
   [ ! -e "$file" -a -e "$plainfile" ] && file="$plainfile"
   echo "$file"
 }

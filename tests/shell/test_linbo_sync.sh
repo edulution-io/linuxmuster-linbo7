@@ -29,32 +29,50 @@ test_default_school_group_is_unchanged() {
 }
 
 test_qualified_file_is_preferred() {
-  HOSTGROUP="abc+raum101"
-  touch "$bootdir/bsmbr.abc+raum101" "$bootdir/bsmbr.raum101"
-  assertEquals "$bootdir/bsmbr.abc+raum101" "$(group_bootfile "$bootdir"/bsmbr)"
+  HOSTGROUP="abc__raum101"
+  touch "$bootdir/bsmbr.abc__raum101" "$bootdir/bsmbr.raum101"
+  assertEquals "$bootdir/bsmbr.abc__raum101" "$(group_bootfile "$bootdir"/bsmbr)"
 }
 
 test_falls_back_to_plain_group() {
-  HOSTGROUP="abc+raum101"
+  HOSTGROUP="abc__raum101"
   touch "$bootdir/gptlabel.raum101"
   assertEquals "$bootdir/gptlabel.raum101" "$(group_bootfile "$bootdir"/gptlabel)"
 }
 
 test_suffix_is_kept_on_fallback() {
-  HOSTGROUP="abc+raum101"
+  HOSTGROUP="abc__raum101"
   touch "$bootdir/BCD.raum101.nvme0n1p3"
   assertEquals "$bootdir/BCD.raum101.nvme0n1p3" "$(group_bootfile "$bootdir"/BCD .nvme0n1p3)"
 }
 
 test_neither_exists_gives_qualified_name() {
-  HOSTGROUP="abc+raum101"
-  assertEquals "$bootdir/BCD.abc+raum101" "$(group_bootfile "$bootdir"/BCD)"
+  HOSTGROUP="abc__raum101"
+  assertEquals "$bootdir/BCD.abc__raum101" "$(group_bootfile "$bootdir"/BCD)"
 }
 
 test_plain_group_with_hyphen() {
-  HOSTGROUP="gs-nord+raum-1_a"
+  HOSTGROUP="gs-nord__raum-1_a"
   touch "$bootdir/BCD.raum-1_a"
   assertEquals "$bootdir/BCD.raum-1_a" "$(group_bootfile "$bootdir"/BCD)"
+}
+
+test_plain_group_with_single_underscore() {
+  HOSTGROUP="abc__win11_edu"
+  touch "$bootdir/BCD.win11_edu"
+  assertEquals "$bootdir/BCD.win11_edu" "$(group_bootfile "$bootdir"/BCD)"
+}
+
+test_plain_group_starting_with_underscore() {
+  HOSTGROUP="abc___raum101"
+  touch "$bootdir/BCD._raum101"
+  assertEquals "$bootdir/BCD._raum101" "$(group_bootfile "$bootdir"/BCD)"
+}
+
+test_default_school_group_with_underscore_is_unchanged() {
+  HOSTGROUP="win11_edu"
+  touch "$bootdir/BCD.win11_edu"
+  assertEquals "$bootdir/BCD.win11_edu" "$(group_bootfile "$bootdir"/BCD)"
 }
 
 . "$(dirname "$0")/shunit2"
