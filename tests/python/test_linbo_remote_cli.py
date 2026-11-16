@@ -4,8 +4,6 @@
 #                validation and orchestration. Real subprocess/tmux/ssh/AD
 #                calls are mocked - see tests/python/README.md for the
 #                "Wave 1 vs Wave 2" testing philosophy this follows.
-# Signed-off by: thomas@linuxmuster.net
-# Assisted by  : Claude
 # Date         : 20261001
 #
 

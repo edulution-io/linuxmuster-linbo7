@@ -6,8 +6,6 @@
 #                command-file assembly, per-host script rendering and
 #                MAC/IP/broadcast-address resolution for wake-on-LAN.
 #                Steps 1+2 of the linbo-remote Python rewrite (issue #169).
-# Signed-off by: thomas@linuxmuster.net
-# Assisted by  : Claude
 # Date         : 20261024
 #
 """

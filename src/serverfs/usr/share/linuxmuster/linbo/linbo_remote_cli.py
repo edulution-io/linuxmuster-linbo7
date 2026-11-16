@@ -7,8 +7,6 @@
 #                executable is a thin launcher that calls main() here (kept
 #                importable/testable, unlike a hyphenated top-level script).
 #                Step 2 of the linbo-remote Python rewrite (issue #169).
-# Signed-off by: thomas@linuxmuster.net
-# Assisted by  : Claude
 # Date         : 20261024
 #
 """
