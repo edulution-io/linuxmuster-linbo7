@@ -348,11 +348,6 @@ def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False, run_user=No
             f.write(script_text)
         os.chmod(script_path, 0o755)
 
-        try:
-            lib.linkLatestRunLog(environment.LINBOLOGDIR, host, logfile)
-        except OSError as error:
-            print(f'Warning: could not link the latest log of {host}: {error}', file=sys.stderr)
-
         subprocess.run(
             [
                 'tmux', 'new', '-Ads', session_name, script_path,
@@ -360,6 +355,10 @@ def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False, run_user=No
             ],
             check=False,
         )
+        try:
+            lib.linkLatestRunLog(environment.LINBOLOGDIR, host, logfile)
+        except OSError as error:
+            print(f'Warning: could not link the latest log of {host}: {error}', file=sys.stderr)
         pid_result = subprocess.run(['pgrep', '-f', logfile], capture_output=True, text=True, check=False)
         pid = pid_result.stdout.split()[0] if pid_result.stdout.strip() else 'unknown'
         print(f'Started with PID {pid}. Log see {logfile}.')
