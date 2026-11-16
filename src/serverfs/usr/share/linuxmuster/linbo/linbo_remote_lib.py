@@ -405,6 +405,32 @@ RUN_RECORD_BASENAME = 'linbo-remote_runs.jsonl'
 # in RUN_RECORD_BASENAME are rotated by logrotate instead.
 RUN_LOG_RETENTION_DAYS = 90
 
+def latestLogLinkName(hostname):
+    """
+    Basename of the stable per-host name (LINBOLOGDIR/<this>) of the newest
+    run's log: <hostname>.linbo-remote. Readers that predate per-run logs
+    (linuxmuster-api, linuxmuster-tools, webui) open this name.
+    """
+    return f'{hostname}.linbo-remote'
+
+
+def linkLatestRunLog(logdir, hostname, logfile):
+    """
+    Point LINBOLOGDIR/<hostname>.linbo-remote at the newest run's logfile.
+    The link is relative and replaced atomically, so a reader never sees a
+    missing name. Returns the link path.
+    """
+    link = os.path.join(logdir, latestLogLinkName(hostname))
+    tmp_link = f'{link}.{os.getpid()}.tmp'
+    try:
+        os.remove(tmp_link)
+    except FileNotFoundError:
+        pass
+    os.symlink(os.path.basename(logfile), tmp_link)
+    os.replace(tmp_link, link)
+    return link
+
+
 _RUN_LOG_RE = re.compile(r'.+_linbo-remote_\d{14}\.log$')
 
 

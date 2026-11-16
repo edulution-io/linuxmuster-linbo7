@@ -348,6 +348,8 @@ def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False, run_user=No
             f.write(script_text)
         os.chmod(script_path, 0o755)
 
+        lib.linkLatestRunLog(environment.LINBOLOGDIR, host, logfile)
+
         subprocess.run(
             [
                 'tmux', 'new', '-Ads', session_name, script_path,

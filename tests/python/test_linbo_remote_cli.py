@@ -187,6 +187,19 @@ def test_direct_dispatch_happy_path(monkeypatch, tmp_path, capsys):
     assert '"hostname":"r100-pc01"' in script_text
 
 
+def test_direct_dispatch_links_the_stable_log_name_to_the_run_log(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *a, **kw: MagicMock(returncode=0, stdout='12345\n'))
+
+    assert cli.main(['-i', 'r100-pc01', '-c', 'reboot']) == 0
+
+    link = tmp_path / 'r100-pc01.linbo-remote'
+    assert link.is_symlink()
+    assert re.fullmatch(r'r100-pc01_linbo-remote_\d{14}\.log', os.readlink(link))
+
+
 def test_direct_dispatch_dry_run_writes_dry_run_flag_into_script(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, 'isOnline', lambda host: True)
     monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
