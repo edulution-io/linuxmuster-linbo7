@@ -8,7 +8,7 @@
 #                Steps 1+2 of the linbo-remote Python rewrite (issue #169).
 # Signed-off by: thomas@linuxmuster.net
 # Assisted by  : Claude
-# Date         : 20260921
+# Date         : 20261024
 #
 """
 Helper functions for the linbo-remote Python rewrite.
@@ -40,9 +40,12 @@ the DHCP lease hook (see dhcpd-update-samba-dns.py) - devices.csv would not
 give a usable IP for those hosts at all.
 """
 
+import json
+import os
 import re
 import shlex
 import subprocess
+import time
 
 DOWNLOAD_TYPES = ('multicast', 'rsync', 'torrent')
 
@@ -53,10 +56,20 @@ _REQUIRED_NR_COMMANDS = ('new', 'sync', 'start', 'postsync', 'prestart', 'upload
 _OPTIONAL_NR_COMMANDS = ('format',)
 _COMMENT_COMMANDS = ('create_image', 'create_qdiff')
 _INITCACHE_COMMAND = 'initcache'
+# image_name:<name> lets the following create_image/upload_image commands
+# work on <name>.qcow2 instead of the image defined in start.conf (#133).
+# linbo_wrapper runs once per command, so it does not get image_name itself:
+# the name is appended to those commands as 4th field instead, e.g.
+# create_image:1:"msg":noble and upload_image:1::noble.
+_IMAGE_NAME_COMMAND = 'image_name'
+_IMAGE_NAME_TARGETS = ('create_image', 'upload_image')
+_QDIFF_COMMANDS = ('create_qdiff', 'upload_qdiff')
+# same rule as valid_image_basename() in linbo_create_image
+_IMAGE_NAME_RE = re.compile(r'^[A-Za-z0-9_-]+$')
 
 KNOWN_COMMANDS = (
     _NO_ARG_COMMANDS + _REQUIRED_NR_COMMANDS + _OPTIONAL_NR_COMMANDS
-    + _COMMENT_COMMANDS + (_INITCACHE_COMMAND,)
+    + _COMMENT_COMMANDS + (_INITCACHE_COMMAND, _IMAGE_NAME_COMMAND)
 )
 
 
@@ -117,10 +130,17 @@ def parseCommandString(cmds):
 
     Raises LinboRemoteError with a human-readable message on anything the
     original bash parser would have rejected via usage().
+
+    image_name:<name> is not passed on itself, it is appended as 4th field to
+    the create_image/upload_image commands following it (see
+    _IMAGE_NAME_COMMAND).
     """
     commands = []
+    image_name = None
+    has_qdiff = False
     remaining = cmds
     while remaining:
+        start = remaining
         cmd = _splitHead(remaining)
         if cmd not in KNOWN_COMMANDS:
             raise LinboRemoteError(f'Command "{cmd}" is not known!')
@@ -152,13 +172,44 @@ def parseCommandString(cmds):
                 comment, remaining = _extractComment(remaining)
                 entry = f'{entry}:"{comment}"'
 
+        elif cmd == _IMAGE_NAME_COMMAND:
+            if remaining[:1] != ':':
+                raise LinboRemoteError(f'Command string "{remaining}" is not valid!')
+            image_name, remaining = _extractToken(remaining)
+            if not _IMAGE_NAME_RE.match(image_name):
+                raise LinboRemoteError(
+                    f'{image_name} is not a valid image name, allowed are letters, digits, "_" and "-"!'
+                )
+            entry = None
+
         # label/partition/reboot/halt: no arguments, nothing further to consume
 
-        commands.append(entry)
+        # a field more than the command takes, e.g. "image_name:1:win11"
+        if remaining[:1] == ':':
+            consumed = start[:len(start) - len(remaining)]
+            leftover = remaining.split(',', 1)[0]
+            raise LinboRemoteError(f'Unexpected "{leftover}" after "{consumed}"!')
+
+        has_qdiff = has_qdiff or cmd in _QDIFF_COMMANDS
+        if image_name and cmd in _IMAGE_NAME_TARGETS:
+            # create_image:<nr>[:"msg"] / upload_image:<nr> -> 4th field
+            fields = entry.split(':', 2)
+            comment = fields[2] if len(fields) > 2 else ''
+            entry = f'{fields[0]}:{fields[1]}:{comment}:{image_name}'
+        if entry is not None:
+            commands.append(entry)
 
         # remove one separating comma between commands, if present
         if remaining[:1] == ',':
             remaining = remaining[1:]
+
+    # a new image name is only supported for base images (#133)
+    if image_name:
+        if has_qdiff:
+            raise LinboRemoteError('Differential images cannot be created or uploaded under a new name!')
+        if not any(c.endswith(f':{image_name}') for c in commands
+                   if c.split(':', 1)[0] in _IMAGE_NAME_TARGETS):
+            raise LinboRemoteError('image_name needs a following create_image or upload_image command!')
 
     return commands
 
@@ -326,14 +377,85 @@ def buildOnbootCmds(commands, noauto=False, disablegui=False, secrets_line=None,
 
 def tmuxSessionName(hostname):
     """
-    The name passed to `tmux new -Ads` when starting a host's session, and
-    the per-host logfile's basename (LINBOLOGDIR/<this>). tmux itself
-    rewrites the '.' to '_' internally for the *session* it actually
-    creates - see tmuxAttachTarget() for the name to use when looking an
-    existing session back up. The logfile is a plain path, not subject to
-    tmux's renaming, so it keeps the dot.
+    The name passed to `tmux new -Ads` when starting a host's session.
+    tmux itself rewrites the '.' to '_' internally for the *session* it
+    actually creates - see tmuxAttachTarget() for the name to use when
+    looking an existing session back up. The per-run logfile has its own
+    name, see runLogName().
     """
     return f'{hostname}.linbo-remote'
+
+
+def runLogName(hostname, timestamp=None):
+    """
+    Basename of one run's logfile (LINBOLOGDIR/<this>):
+    <hostname>_linbo-remote_<YYYYmmddHHMMSS>.log. Every run gets its own
+    file, so a new run no longer truncates the previous one's log. Seconds
+    are part of the timestamp so two runs on the same host within one minute
+    don't collide. The name deliberately does not match the *_linbo.log glob
+    update-linbofs scans for missing firmware.
+    """
+    if timestamp is None:
+        timestamp = time.strftime('%Y%m%d%H%M%S')
+    return f'{hostname}_linbo-remote_{timestamp}.log'
+
+
+RUN_RECORD_BASENAME = 'linbo-remote_runs.jsonl'
+
+# Per-run logs older than this are deleted when a new run starts. Run records
+# in RUN_RECORD_BASENAME are rotated by logrotate instead.
+RUN_LOG_RETENTION_DAYS = 90
+
+_RUN_LOG_RE = re.compile(r'.+_linbo-remote_\d{14}\.log$')
+
+
+def pruneRunLogs(logdir, max_age_days=RUN_LOG_RETENTION_DAYS, now=None):
+    """
+    Delete per-run logs (see runLogName()) in logdir whose modification time
+    is more than max_age_days old; returns the number removed. Only files
+    matching the per-run name are touched. Best effort: a file that cannot be
+    stat'ed or removed is skipped, pruning must never break a run.
+
+    logrotate cannot do this: every per-run log has a unique name, so it would
+    never rotate (and thus never delete) the small ones, and its size rule
+    would rotate big ones into an empty file of the same name.
+    """
+    cutoff = (time.time() if now is None else now) - max_age_days * 86400
+    removed = 0
+    try:
+        names = os.listdir(logdir)
+    except OSError:
+        return 0
+    for name in names:
+        if not _RUN_LOG_RE.match(name):
+            continue
+        path = os.path.join(logdir, name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def buildRunRecordPrefix(hostname, commands, started, logfile, mode='direct', dry_run=False):
+    """
+    The static part of one run's record (see renderRemoteScript()'s
+    record_file): a JSON object *without* its closing brace. The remote
+    script appends `,"end":...,"rc":...}` when it exits, because only it
+    knows the end time and exit status. `started` is a local
+    time.struct_time; the record is one line in LINBOLOGDIR/RUN_RECORD_BASENAME.
+    """
+    record = {
+        'hostname': hostname,
+        'mode': mode,
+        'commands': list(commands),
+        'dry_run': bool(dry_run),
+        'start': time.strftime('%Y-%m-%dT%H:%M:%S%z', started),
+        'log': logfile,
+    }
+    return json.dumps(record, separators=(',', ':'))[:-1]
 
 
 def tmuxAttachTarget(hostname):
@@ -349,7 +471,8 @@ WRAPPER = '/usr/bin/linbo_wrapper'
 _BACKGROUNDED_COMMAND_PREFIXES = ('start', 'reboot', 'halt', 'poweroff')
 
 
-def renderRemoteScript(hostname, commands, script_path, secrets_uploaded=False, dry_run=False):
+def renderRemoteScript(hostname, commands, script_path, secrets_uploaded=False, dry_run=False,
+                       record_file=None, record_prefix=None):
     """
     Build the per-host shell script executed inside a tmux session for -c
     (direct) mode: disables the GUI, runs each normalized command
@@ -373,9 +496,32 @@ def renderRemoteScript(hostname, commands, script_path, secrets_uploaded=False, 
         exactly where you don't want a real reboot while testing) so it just
         reports what it would do instead of actually doing it. See
         linbo_wrapper's own --dry-run handling.
+    record_file/record_prefix: when both are given, an EXIT trap appends one
+        JSON line to record_file - record_prefix (buildRunRecordPrefix())
+        plus the end time and the script's exit status. A trap, so that an
+        aborted run (e.g. its tmux session being killed) leaves a record too,
+        with the 128+signal exit status.
+        The append is serialized with flock, as parallel runs share the file.
     """
     wrapper = f'{WRAPPER} --dry-run' if dry_run else WRAPPER
-    lines = ['#!/bin/bash', f'{SSH_CMD} {hostname} gui_ctl disable', 'RC=0']
+    lines = ['#!/bin/bash']
+    if record_file and record_prefix:
+        lines += [
+            f'RUN_RECORD={shlex.quote(record_prefix)}',
+            f'RUN_RECORD_FILE={shlex.quote(record_file)}',
+            'writeRunRecord() {',
+            '    local rc=$?',
+            '    { flock 9 && printf \'%s,"end":"%s","rc":%d}\\n\' "$RUN_RECORD" '
+            '"$(date +%Y-%m-%dT%H:%M:%S%z)" "$rc" >&9; } 2>/dev/null 9>>"$RUN_RECORD_FILE"',
+            '}',
+            # bash reports $?=0 in the EXIT trap after an unhandled fatal signal, which would
+            # record an aborted run as a success - turn the signal into its 128+n status first
+            "trap 'exit 129' HUP",
+            "trap 'exit 130' INT",
+            "trap 'exit 143' TERM",
+            'trap writeRunRecord EXIT',
+        ]
+    lines += [f'{SSH_CMD} {hostname} gui_ctl disable', 'RC=0']
     has_backgrounded = False
     for index, cmd in enumerate(commands):
         if index > 0:

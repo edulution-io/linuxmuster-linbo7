@@ -1,9 +1,68 @@
+linuxmuster-linbo7 (7.4.21) lmn74; urgency=low
+
+  * fix(rsync-post-upload): drop the dead empty-BAKDIR cleanup after a
+    failed upload (#133, fd29b93).
+  * feat(linbo_create_image): create a base image under a new name
+    (#133, 866eef6).
+  * feat(rsync-pre-upload): accept image uploads only from registered
+    devices (#133, c04f422).
+  * feat(rsync-pre-upload): leave image uploads of other schools unchecked
+    (#133, c7250bc).
+  * feat(rsync-pre-upload): guard image uploads under a new name
+    (#133, b2b3f6a).
+  * feat(rsync-post-upload): take over the supplemental files of the
+    source image (#133, 4d70dc2).
+  * feat(linbo-remote, linbo_wrapper): create and upload images under a
+    new name (#133, 9bcbbd3).
+  * fix(linbo-remote): name a surplus field instead of an unknown empty
+    command (#133, 446256f).
+  * fix(linbo_upload): report failed uploads as failed (#198, d8d57ff).
+  * feat(init.sh): show the progress of onboot commands in the splash
+    (#199, 9ab96b4).
+  * feat(init.sh): log failed onboot commands and skip the remaining ones
+    (#199, a2be6c2).
+  * fix(linbo_upload, linbo_create_image): never upload an incomplete image
+    (#199, dea35d6).
+
+ -- Thomas Schmitt <thomas@linuxmuster.net>  Sun, 25 Oct 2026 14:54:49 +0100
+
+linuxmuster-linbo7 (7.4.20) lmn74; urgency=low
+
+  * fix(linbo_mkgrubimg): handle hosts of non-default schools
+    (#178, c32c829).
+  * refactor(linbo-torrent, linbo_mktorrent): drop leftover ctorrent piece
+    length option (#152, 0dcf399).
+  * fix(linbo-configure): replace an outdated /etc/default/linbo-torrent on
+    upgrade (#152, ed672f3).
+
+ -- Thomas Schmitt <thomas@linuxmuster.net>  Sun, 18 Oct 2026 13:27:35 +0200
+
+linuxmuster-linbo7 (7.4.19) lmn74; urgency=low
+
+  * fix(linbo-torrent): never hand machine account files to nobody
+    (#182, b760996).
+  * fix(linbo-configure): make existing machine account files root-only
+    on upgrade (#182, 03324a7).
+
+ -- Thomas Schmitt <thomas@linuxmuster.net>  Wed, 07 Oct 2026 13:34:27 +0200
+
 linuxmuster-linbo7 (7.4.18) lmn74; urgency=low
 
   * feat(linbo-torrent): enable LPD and a 5 minute tracker interval by
     default (#152, d08c577).
+  * feat(linbo-remote): write one logfile per run - the log is named
+    <host>_linbo-remote_<YYYYmmddHHMMSS>.log, so a new run no longer
+    truncates the previous one (#179, 5b325b2).
+  * feat(linbo-remote): append a JSON record per finished run to
+    linbo-remote_runs.jsonl in the LINBO log directory (#179, 99a3b68).
+  * fix(linbo-remote): record 128+signal as rc of an aborted run
+    (#179, 6f13ee0).
+  * feat(linbo-remote): prune old per-run logs, rotate the run record
+    (#179, dd53957).
+  * fix(init.sh): do not hang in udhcpc on an interface that is down (#187, 84a0a91).
+  * fix(linbo_mountcache): find the cache partition without by-id links (#189, 3757567).
 
- -- Thomas Schmitt <thomas@linuxmuster.net>  Fri, 25 Sep 2026 09:27:47 +0200
+ -- Thomas Schmitt <thomas@linuxmuster.net>  Mon,  5 Oct 2026 16:57:02 +0200
 
 linuxmuster-linbo7 (7.4.17) lmn74; urgency=low
 

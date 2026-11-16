@@ -1,8 +1,10 @@
 #!/bin/bash
 #
-# configure script for linuxmuster-linbo7 package
-# thomas@linuxmuster.net
-# 20260625
+# Filename     : linbo-configure.sh
+# Description  : configure script for linuxmuster-linbo7 package
+# Signed-off by: thomas@linuxmuster.net
+# Assisted by  : Claude
+# Date         : 20261018
 #
 
 # read environment & setup values
@@ -16,6 +18,14 @@ mkdir -p "$LINBODIR/tmp"
 # change owner of logdir to nobody
 [ -d "$LINBOLOGDIR" ] || mkdir -p $LINBOLOGDIR
 chown nobody $LINBOLOGDIR -R
+
+# machine account files hold samba password hashes, the [linbo] rsync module
+# serves LINBODIR as nobody, so they must belong to root at any depth. Fixes
+# files left nobody-owned by linbo-torrent before #182, as linbo-torrent
+# itself is not restarted on every upgrade.
+if [ -d "$LINBOIMGDIR" ]; then
+  find "$LINBOIMGDIR" -type f -name "*.macct" -exec chown root:root {} + -exec chmod 600 {} +
+fi
 
 # create dropbear ssh keys
 for i in rsa ecdsa ed25519; do
@@ -63,6 +73,9 @@ if [ -e "$conf" ]; then
   rm -f "$conf"
   systemctl daemon-reload
 fi
+
+# replace an outdated linbo-torrent defaults file with the current template (#152)
+"$LINBOSHAREDIR/update-linbo-torrent"
 
 # check linbo's multicast and torrent services
 for service in linbo-multicast linbo-torrent; do

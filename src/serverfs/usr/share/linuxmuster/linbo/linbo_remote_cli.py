@@ -9,13 +9,13 @@
 #                Step 2 of the linbo-remote Python rewrite (issue #169).
 # Signed-off by: thomas@linuxmuster.net
 # Assisted by  : Claude
-# Date         : 20260921
+# Date         : 20261024
 #
 """
 linbo-remote's CLI orchestration.
 
 Preserves the external contract of the original bash implementation
-(exit codes, key stdout strings, tmux session/logfile naming, onboot
+(exit codes, key stdout strings, tmux session naming, one logfile per run, onboot
 .cmd-file format - see the tracking issue for the full consumer list),
 while fixing two confirmed bugs rather than replicating them (see issue
 #169 step 2 notes and tests/python/README.md):
@@ -118,6 +118,13 @@ def printUsage(msg=None):
     print('upload_image:<#>         : Uploads a full image from operating system nr <#>.')
     print('create_qdiff:<#>:<"msg"> : Creates a differential image from operating system nr <#>.')
     print('upload_qdiff:<#>         : Uploads a differential image from operating system nr <#>.')
+    print('image_name:<name>        : The create_image and upload_image commands following')
+    print('                           it use the image <name>.qcow2 instead of the one')
+    print('                           defined in start.conf. It takes only the name, no')
+    print('                           position number, and must come before them, e.g.')
+    print('                           image_name:noble,create_image:1,upload_image:1')
+    print('                           <name> may consist of letters, digits, "_" and "-".')
+    print('                           Cannot be combined with create_qdiff/upload_qdiff.')
     print('reboot                   : Reboots the client.')
     print('halt                     : Shuts the client down.')
     print()
@@ -300,6 +307,8 @@ def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False):
     if wait:
         doWait(wait, f'Waiting {wait} second(s) for client(s) to boot', leading_blank_line=True)
 
+    lib.pruneRunLogs(environment.LINBOLOGDIR)
+
     print()
     print('Sending command(s) to:')
     for host in hosts:
@@ -317,11 +326,17 @@ def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False):
             )
 
         session_name = lib.tmuxSessionName(host)
-        logfile = os.path.join(environment.LINBOLOGDIR, session_name)
+        started = time.localtime()
+        logfile = os.path.join(
+            environment.LINBOLOGDIR, lib.runLogName(host, time.strftime('%Y%m%d%H%M%S', started)),
+        )
+        record_prefix = lib.buildRunRecordPrefix(host, commands, started, logfile, dry_run=dry_run)
         script_path = os.path.join(TMPDIR, f'{os.getpid()}.{host}.sh')
 
         script_text = lib.renderRemoteScript(
             host, commands, script_path, secrets_uploaded=secrets_uploaded, dry_run=dry_run,
+            record_file=os.path.join(environment.LINBOLOGDIR, lib.RUN_RECORD_BASENAME),
+            record_prefix=record_prefix,
         )
         with open(script_path, 'w') as f:
             f.write(script_text)

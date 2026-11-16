@@ -7,14 +7,26 @@
 #                wake-on-LAN target resolution. See tests/python/README.md.
 # Signed-off by: thomas@linuxmuster.net
 # Assisted by  : Claude
-# Date         : 20260921
+# Date         : 20261024
 #
+
+import fnmatch
+import json
+import os
+import re
+import signal
+import shutil
+import subprocess
+import time
 
 import pytest
 
 from linbo_remote_lib import (
     LinboRemoteError,
+    RUN_RECORD_BASENAME,
     buildOnbootCmds,
+    buildRunRecordPrefix,
+    pruneRunLogs,
     getMacFromAd,
     getIpFromAd,
     hostsInGroup,
@@ -25,6 +37,7 @@ from linbo_remote_lib import (
     resolveExplicitHosts,
     resolveWolTarget,
     tmuxAttachTarget,
+    runLogName,
     tmuxSessionName,
 )
 
@@ -110,6 +123,80 @@ def test_initcache_bad_dltype_raises():
 def test_format_nr_not_an_integer_raises():
     with pytest.raises(LinboRemoteError, match='not an integer'):
         parseCommandString('format:x')
+
+
+# --- image_name (#133) ----------------------------------------------------
+# linbo_wrapper runs once per command, so image_name is not passed on itself
+# but appended as 4th field to the following create_image/upload_image.
+
+def test_image_name_is_appended_to_create_and_upload():
+    assert parseCommandString('image_name:noble,create_image:1,upload_image:1') == [
+        'create_image:1::noble', 'upload_image:1::noble',
+    ]
+
+
+def test_image_name_keeps_the_create_image_comment():
+    assert parseCommandString('image_name:Noble_24-04,create_image:1:new noble,reboot') == [
+        'create_image:1:"new noble":Noble_24-04', 'reboot',
+    ]
+
+
+def test_image_name_only_affects_following_commands():
+    assert parseCommandString('upload_image:1,image_name:noble,create_image:1,sync:1') == [
+        'upload_image:1', 'create_image:1::noble', 'sync:1',
+    ]
+
+
+def test_create_image_comment_ends_at_image_name():
+    assert parseCommandString('create_image:1:msg,image_name:noble,upload_image:1') == [
+        'create_image:1:"msg"', 'upload_image:1::noble',
+    ]
+
+
+@pytest.mark.parametrize('name', ['no.ble', 'noble.qcow2', '../noble', 'no ble', ''])
+def test_image_name_invalid_raises(name):
+    with pytest.raises(LinboRemoteError, match='not a valid image name'):
+        parseCommandString(f'image_name:{name},create_image:1')
+
+
+@pytest.mark.parametrize('cmds, message', [
+    # the field order mixed up: name with a position number
+    ('create_image:1,upload_image:1,image_name:1:win11-test',
+     'Unexpected ":win11-test" after "image_name:1"!'),
+    ('sync:1:x,reboot', 'Unexpected ":x" after "sync:1"!'),
+    ('reboot:1', 'Unexpected ":1" after "reboot"!'),
+    ('initcache:rsync:x', 'Unexpected ":x" after "initcache:rsync"!'),
+    ('create_image:1:a:b', 'Unexpected ":b" after "create_image:1:a"!'),
+])
+def test_unexpected_field_after_a_command_raises(cmds, message):
+    with pytest.raises(LinboRemoteError) as error:
+        parseCommandString(cmds)
+    assert str(error.value) == message
+
+
+def test_image_name_without_name_raises():
+    with pytest.raises(LinboRemoteError, match='not valid'):
+        parseCommandString('image_name,create_image:1')
+
+
+@pytest.mark.parametrize('cmds', [
+    'image_name:noble',
+    'image_name:noble,sync:1,reboot',
+    'create_image:1,image_name:noble',
+])
+def test_image_name_without_following_image_command_raises(cmds):
+    with pytest.raises(LinboRemoteError, match='needs a following'):
+        parseCommandString(cmds)
+
+
+@pytest.mark.parametrize('cmds', [
+    'image_name:noble,create_qdiff:1',
+    'image_name:noble,create_image:1,upload_qdiff:1',
+    'create_qdiff:1,image_name:noble,upload_image:1',
+])
+def test_image_name_with_qdiff_raises(cmds):
+    with pytest.raises(LinboRemoteError, match='Differential images'):
+        parseCommandString(cmds)
 
 
 # --- hostsInGroup / hostsInRoom -----------------------------------------
@@ -239,10 +326,23 @@ def test_build_onboot_cmds_dry_run_comes_first():
     ) == 'dryrun,linbo:somehash,upload_image:1,noauto'
 
 
-# --- tmux session / logfile naming ------------------------------------------
+# --- tmux session / per-run logfile naming ------------------------------------------
 
 def test_tmux_session_name_uses_dot():
     assert tmuxSessionName('r100-pc01') == 'r100-pc01.linbo-remote'
+
+
+def test_run_log_name_has_host_and_timestamp():
+    assert runLogName('r100-pc01', '20261001120530') == 'r100-pc01_linbo-remote_20261001120530.log'
+
+
+def test_run_log_name_default_timestamp_is_seconds_resolution():
+    assert re.fullmatch(r'r100-pc01_linbo-remote_\d{14}\.log', runLogName('r100-pc01'))
+
+
+def test_run_log_name_does_not_match_update_linbofs_glob():
+    # update-linbofs scans LINBOLOGDIR/*_linbo.log for missing firmware
+    assert not fnmatch.fnmatch(runLogName('r100-pc01'), '*_linbo.log')
 
 
 def test_tmux_attach_target_uses_underscore():
@@ -366,3 +466,129 @@ def test_resolve_wol_target_falls_back_to_dhcp_lease_when_ad_mac_invalid():
     )
     assert mac == '52:54:00:dd:ee:ff'
     assert ip == '10.16.100.1'
+
+
+# --- per-run record (JSON line appended by the remote script) ----------------
+
+STARTED = time.strptime('20261001120530', '%Y%m%d%H%M%S')
+
+
+def test_run_record_prefix_is_open_json_object():
+    prefix = buildRunRecordPrefix('r100-pc01', ['format:2', 'sync:1'], STARTED, '/log/x.log')
+    assert not prefix.endswith('}')
+    record = json.loads(prefix + '}')
+    assert record['hostname'] == 'r100-pc01'
+    assert record['mode'] == 'direct'
+    assert record['commands'] == ['format:2', 'sync:1']
+    assert record['dry_run'] is False
+    assert record['log'] == '/log/x.log'
+    assert record['start'].startswith('2026-10-01T12:05:30')
+
+
+def test_render_remote_script_without_record_has_no_trap():
+    script = renderRemoteScript('r100-pc01', ['sync:1'], '/var/tmp/x.sh')
+    assert 'trap' not in script
+    assert 'RUN_RECORD' not in script
+
+
+def test_render_remote_script_with_record_installs_exit_trap_first():
+    script = renderRemoteScript(
+        'r100-pc01', ['sync:1'], '/var/tmp/x.sh',
+        record_file='/log/' + RUN_RECORD_BASENAME, record_prefix='{"hostname":"r100-pc01"',
+    )
+    lines = script.splitlines()
+    assert lines[0] == '#!/bin/bash'
+    assert 'trap writeRunRecord EXIT' in lines
+    assert lines.index('trap writeRunRecord EXIT') < next(
+        i for i, line in enumerate(lines) if 'gui_ctl disable' in line
+    )
+
+
+needs_bash_flock = pytest.mark.skipif(
+    not (shutil.which('bash') and shutil.which('flock')), reason='needs bash and flock',
+)
+
+
+def runRenderedScript(monkeypatch, tmp_path, ssh_cmd, commands):
+    """Run a rendered script for real, with linbo-ssh replaced by `true`/`false`."""
+    import linbo_remote_lib
+    monkeypatch.setattr(linbo_remote_lib, 'SSH_CMD', ssh_cmd)
+    record_file = tmp_path / RUN_RECORD_BASENAME
+    prefix = buildRunRecordPrefix('r100-pc01', commands, STARTED, str(tmp_path / 'x.log'))
+    script = tmp_path / 'run.sh'
+    script.write_text(renderRemoteScript(
+        'r100-pc01', commands, str(script), record_file=str(record_file), record_prefix=prefix,
+    ))
+    rc = subprocess.run(['bash', str(script)], check=False).returncode
+    return rc, record_file
+
+
+@needs_bash_flock
+def test_run_record_written_on_success(monkeypatch, tmp_path):
+    rc, record_file = runRenderedScript(monkeypatch, tmp_path, 'true', ['sync:1'])
+    assert rc == 0
+    lines = record_file.read_text().splitlines()
+    assert len(lines) == 1
+    record = json.loads(lines[0])
+    assert record['rc'] == 0
+    assert record['commands'] == ['sync:1']
+    assert re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4}', record['end'])
+
+
+@needs_bash_flock
+def test_run_record_written_on_failure_and_appended(monkeypatch, tmp_path):
+    runRenderedScript(monkeypatch, tmp_path, 'true', ['sync:1'])
+    rc, record_file = runRenderedScript(monkeypatch, tmp_path, 'false', ['sync:1'])
+    assert rc == 1
+    records = [json.loads(line) for line in record_file.read_text().splitlines()]
+    assert [r['rc'] for r in records] == [0, 1]
+
+
+@needs_bash_flock
+@pytest.mark.parametrize('sig, expected_rc', [
+    (signal.SIGHUP, 129),    # tmux kill-session / closed pane
+    (signal.SIGTERM, 143),
+    (signal.SIGINT, 130),
+])
+def test_run_record_of_aborted_run_has_signal_exit_status(monkeypatch, tmp_path, sig, expected_rc):
+    import linbo_remote_lib
+    monkeypatch.setattr(linbo_remote_lib, 'SSH_CMD', 'sleep 30; true')
+    record_file = tmp_path / RUN_RECORD_BASENAME
+    prefix = buildRunRecordPrefix('r100-pc01', ['sync:1'], STARTED, str(tmp_path / 'x.log'))
+    script = tmp_path / 'run.sh'
+    script.write_text(renderRemoteScript(
+        'r100-pc01', ['sync:1'], str(script), record_file=str(record_file), record_prefix=prefix,
+    ))
+    proc = subprocess.Popen(['bash', str(script)], start_new_session=True)
+    time.sleep(1)
+    os.killpg(proc.pid, sig)    # whole group, like tmux does - kills the running child too
+    proc.wait(timeout=10)
+    record = json.loads(record_file.read_text().splitlines()[0])
+    assert record['rc'] == expected_rc
+
+
+# --- retention of per-run logs ----------------------------------------------
+
+def test_prune_run_logs_removes_only_old_per_run_logs(tmp_path):
+    now = time.time()
+    old = tmp_path / 'r100-pc01_linbo-remote_20260101000000.log'
+    fresh = tmp_path / 'r100-pc01_linbo-remote_20261001120000.log'
+    others = [
+        tmp_path / 'r100-pc01_linbo.log',
+        tmp_path / 'rsync-pre-download.log',
+        tmp_path / RUN_RECORD_BASENAME,
+        tmp_path / 'r100-pc01_linbo-remote_20260101000000.log.1.gz',
+    ]
+    for f in [old, fresh, *others]:
+        f.write_text('x')
+        os.utime(f, (now - 200 * 86400, now - 200 * 86400))
+    os.utime(fresh, (now - 1 * 86400, now - 1 * 86400))
+
+    assert pruneRunLogs(str(tmp_path), max_age_days=90, now=now) == 1
+    assert not old.exists()
+    assert fresh.exists()
+    assert all(f.exists() for f in others)
+
+
+def test_prune_run_logs_missing_dir_is_not_an_error(tmp_path):
+    assert pruneRunLogs(str(tmp_path / 'nope')) == 0
