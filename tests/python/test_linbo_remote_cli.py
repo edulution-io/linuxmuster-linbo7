@@ -200,6 +200,20 @@ def test_direct_dispatch_links_the_stable_log_name_to_the_run_log(monkeypatch, t
     assert re.fullmatch(r'r100-pc01_linbo-remote_\d{14}\.log', os.readlink(link))
 
 
+def test_a_failed_tmux_start_does_not_link_the_stable_log_name(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    previous = tmp_path / 'r100-pc01_linbo-remote_20261001120000.log'
+    previous.write_text('running\n')
+    (tmp_path / 'r100-pc01.linbo-remote').symlink_to(previous.name)
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *a, **kw: MagicMock(returncode=1, stdout=''))
+
+    cli.main(['-i', 'r100-pc01', '-c', 'reboot'])
+
+    assert os.readlink(tmp_path / 'r100-pc01.linbo-remote') == previous.name
+
+
 def test_a_failing_link_does_not_stop_the_run(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, 'isOnline', lambda host: True)
     monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))

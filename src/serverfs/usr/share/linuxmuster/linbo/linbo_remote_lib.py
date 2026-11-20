@@ -427,7 +427,11 @@ def linkLatestRunLog(logdir, hostname, logfile):
     except FileNotFoundError:
         pass
     os.symlink(os.path.basename(logfile), tmp_link)
-    os.replace(tmp_link, link)
+    try:
+        os.replace(tmp_link, link)
+    except OSError:
+        os.remove(tmp_link)
+        raise
     return link
 
 

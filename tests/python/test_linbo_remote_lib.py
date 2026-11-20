@@ -660,6 +660,19 @@ def test_link_latest_run_log_before_the_log_exists_is_dangling_not_an_error(tmp_
     assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'started\n'
 
 
+def test_link_latest_run_log_deletes_its_temporary_link_when_the_replace_fails(tmp_path, monkeypatch):
+    logfile = tmp_path / runLogName('r100-pc01', '20261001120000')
+    logfile.write_text('started\n')
+
+    def failing_replace(*args, **kwargs):
+        raise PermissionError('read-only')
+
+    monkeypatch.setattr(os, 'replace', failing_replace)
+    with pytest.raises(PermissionError):
+        linkLatestRunLog(str(tmp_path), 'r100-pc01', str(logfile))
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith('.tmp')] == []
+
+
 def test_prune_run_logs_keeps_the_latest_log_link(tmp_path):
     old = tmp_path / runLogName('r100-pc01', '20200101000000')
     old.write_text('old\n')
