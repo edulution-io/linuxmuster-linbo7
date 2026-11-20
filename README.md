@@ -145,6 +145,9 @@ Options:
                     would do on the client, without actually doing it
                     (no partitioning, syncing, image creation/upload,
                     reboot or halt). Requires "-c" or "-p".
+ --run-user <name>  Name recorded as the starter of a "-c" run in the run
+                    record (default: SUDO_USER or USER). For callers that
+                    act on behalf of someone else, e.g. linuxmuster-api.
  -g <group>         All hosts of this hostgroup will be processed.
  -i <i1,i2,...>     Single ip or hostname or comma separated list of ips
                     or hostnames of clients to be processed.
