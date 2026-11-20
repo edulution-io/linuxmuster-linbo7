@@ -46,6 +46,7 @@ import re
 import shlex
 import subprocess
 import time
+from datetime import datetime
 
 DOWNLOAD_TYPES = ('multicast', 'rsync', 'torrent')
 
@@ -406,6 +407,36 @@ RUN_RECORD_BASENAME = 'linbo-remote_runs.jsonl'
 # in RUN_RECORD_BASENAME are rotated by logrotate instead.
 RUN_LOG_RETENTION_DAYS = 90
 
+def latestLogLinkName(hostname):
+    """
+    Basename of the stable per-host name (LINBOLOGDIR/<this>) of the newest
+    run's log: <hostname>.linbo-remote. Readers that predate per-run logs
+    (linuxmuster-api, linuxmuster-tools, webui) open this name.
+    """
+    return f'{hostname}.linbo-remote'
+
+
+def linkLatestRunLog(logdir, hostname, logfile):
+    """
+    Point LINBOLOGDIR/<hostname>.linbo-remote at the newest run's logfile.
+    The link is relative and replaced atomically, so a reader never sees a
+    missing name. Returns the link path.
+    """
+    link = os.path.join(logdir, latestLogLinkName(hostname))
+    tmp_link = f'{link}.{os.getpid()}.tmp'
+    try:
+        os.remove(tmp_link)
+    except FileNotFoundError:
+        pass
+    os.symlink(os.path.basename(logfile), tmp_link)
+    try:
+        os.replace(tmp_link, link)
+    except OSError:
+        os.remove(tmp_link)
+        raise
+    return link
+
+
 _RUN_LOG_RE = re.compile(r'.+_linbo-remote_\d{14}\.log$')
 
 
@@ -439,20 +470,46 @@ def pruneRunLogs(logdir, max_age_days=RUN_LOG_RETENTION_DAYS, now=None):
     return removed
 
 
-def buildRunRecordPrefix(hostname, commands, started, logfile, mode='direct', dry_run=False):
+RUN_RECORD_VERSION = 1
+
+
+def isoTimestamp(started):
+    """Local time.struct_time as ISO 8601 with a colon offset (2026-10-01T12:05:30+02:00)."""
+    return datetime.fromtimestamp(time.mktime(started)).astimezone().isoformat(timespec='seconds')
+
+
+def newRunId(started, pid):
+    """
+    One id per linbo-remote invocation, shared by the records of all its hosts:
+    the start time (sortable) and the process id (unique among concurrent runs).
+    """
+    return f'{time.strftime("%Y%m%d%H%M%S", started)}-{pid}'
+
+
+def buildRunRecordPrefix(hostname, commands, started, logfile, mode='direct', dry_run=False,
+                         run_id=None, user=None):
     """
     The static part of one run's record (see renderRemoteScript()'s
     record_file): a JSON object *without* its closing brace. The remote
     script appends `,"end":...,"rc":...}` when it exits, because only it
     knows the end time and exit status. `started` is a local
     time.struct_time; the record is one line in LINBOLOGDIR/RUN_RECORD_BASENAME.
+
+    Fields: `v` (schema version, RUN_RECORD_VERSION), `run_id` (shared by all
+    host lines of one invocation), `user` (who started the run, or null),
+    `start` and `end` (ISO 8601 with colon offset), `rc` (exit status of the
+    script; 0 for a backgrounded start/reboot/halt/poweroff only means the
+    command was dispatched).
     """
     record = {
+        'v': RUN_RECORD_VERSION,
+        'run_id': run_id,
+        'user': user,
         'hostname': hostname,
         'mode': mode,
         'commands': list(commands),
         'dry_run': bool(dry_run),
-        'start': time.strftime('%Y-%m-%dT%H:%M:%S%z', started),
+        'start': isoTimestamp(started),
         'log': logfile,
     }
     return json.dumps(record, separators=(',', ':'))[:-1]
@@ -512,7 +569,7 @@ def renderRemoteScript(hostname, commands, script_path, secrets_uploaded=False, 
             'writeRunRecord() {',
             '    local rc=$?',
             '    { flock 9 && printf \'%s,"end":"%s","rc":%d}\\n\' "$RUN_RECORD" '
-            '"$(date +%Y-%m-%dT%H:%M:%S%z)" "$rc" >&9; } 2>/dev/null 9>>"$RUN_RECORD_FILE"',
+            '"$(date -Iseconds)" "$rc" >&9; } 2>/dev/null 9>>"$RUN_RECORD_FILE"',
             '}',
             # bash reports $?=0 in the EXIT trap after an unhandled fatal signal, which would
             # record an aborted run as a success - turn the signal into its 128+n status first

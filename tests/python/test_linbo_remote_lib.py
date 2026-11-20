@@ -25,7 +25,12 @@ from linbo_remote_lib import (
     LinboRemoteError,
     RUN_RECORD_BASENAME,
     buildOnbootCmds,
+    RUN_RECORD_VERSION,
     buildRunRecordPrefix,
+    isoTimestamp,
+    newRunId,
+    latestLogLinkName,
+    linkLatestRunLog,
     pruneRunLogs,
     getMacFromAd,
     getIpFromAd,
@@ -471,6 +476,7 @@ def test_resolve_wol_target_falls_back_to_dhcp_lease_when_ad_mac_invalid():
 # --- per-run record (JSON line appended by the remote script) ----------------
 
 STARTED = time.strptime('20261001120530', '%Y%m%d%H%M%S')
+ISO_WITH_COLON_OFFSET = r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d'
 
 
 def test_run_record_prefix_is_open_json_object():
@@ -483,6 +489,39 @@ def test_run_record_prefix_is_open_json_object():
     assert record['dry_run'] is False
     assert record['log'] == '/log/x.log'
     assert record['start'].startswith('2026-10-01T12:05:30')
+    assert re.fullmatch(ISO_WITH_COLON_OFFSET, record['start'])
+
+
+def test_run_record_prefix_carries_schema_version_run_id_and_user():
+    prefix = buildRunRecordPrefix('r100-pc01', ['sync:1'], STARTED, '/log/x.log',
+                                  run_id='20261001120530-4711', user='alice')
+    record = json.loads(prefix + '}')
+    assert record['v'] == RUN_RECORD_VERSION == 1
+    assert record['run_id'] == '20261001120530-4711'
+    assert record['user'] == 'alice'
+
+
+def test_run_record_prefix_without_run_id_and_user_has_nulls():
+    record = json.loads(buildRunRecordPrefix('r100-pc01', ['sync:1'], STARTED, '/log/x.log') + '}')
+    assert record['run_id'] is None
+    assert record['user'] is None
+
+
+def test_iso_timestamp_has_a_colon_in_the_offset():
+    assert re.fullmatch(ISO_WITH_COLON_OFFSET, isoTimestamp(STARTED))
+    assert isoTimestamp(STARTED).startswith('2026-10-01T12:05:30')
+
+
+def test_run_id_combines_start_time_and_pid():
+    assert newRunId(STARTED, 4711) == '20261001120530-4711'
+    assert newRunId(STARTED, 4711) != newRunId(STARTED, 4712)
+
+
+def test_render_remote_script_records_end_time_as_iso_with_colon_offset():
+    script = renderRemoteScript('r100-pc01', ['sync:1'], '/var/tmp/x.sh',
+                                record_file='/log/r.jsonl', record_prefix='{"a":1')
+    assert 'date -Iseconds' in script
+    assert '%z' not in script
 
 
 def test_render_remote_script_without_record_has_no_trap():
@@ -532,7 +571,7 @@ def test_run_record_written_on_success(monkeypatch, tmp_path):
     record = json.loads(lines[0])
     assert record['rc'] == 0
     assert record['commands'] == ['sync:1']
-    assert re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d{4}', record['end'])
+    assert re.fullmatch(ISO_WITH_COLON_OFFSET, record['end'])
 
 
 @needs_bash_flock
@@ -592,3 +631,65 @@ def test_prune_run_logs_removes_only_old_per_run_logs(tmp_path):
 
 def test_prune_run_logs_missing_dir_is_not_an_error(tmp_path):
     assert pruneRunLogs(str(tmp_path / 'nope')) == 0
+
+
+# --- stable <host>.linbo-remote name for readers of the old log layout ---------
+
+def test_latest_log_link_name():
+    assert latestLogLinkName('r100-pc01') == 'r100-pc01.linbo-remote'
+
+
+def test_link_latest_run_log_points_at_the_newest_log(tmp_path):
+    first = tmp_path / runLogName('r100-pc01', '20261001120000')
+    second = tmp_path / runLogName('r100-pc01', '20261001130000')
+    first.write_text('first run\n')
+    second.write_text('second run\n')
+    link = linkLatestRunLog(str(tmp_path), 'r100-pc01', str(first))
+    assert os.path.islink(link)
+    assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'first run\n'
+    linkLatestRunLog(str(tmp_path), 'r100-pc01', str(second))
+    assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'second run\n'
+    # relative target, no stale temporary link left behind
+    assert os.readlink(link) == second.name
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith('.tmp')] == []
+
+
+def test_link_latest_run_log_before_the_log_exists_is_dangling_not_an_error(tmp_path):
+    logfile = tmp_path / runLogName('r100-pc01', '20261001120000')
+    link = linkLatestRunLog(str(tmp_path), 'r100-pc01', str(logfile))
+    assert os.path.islink(link) and not os.path.exists(link)
+    logfile.write_text('started\n')
+    assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'started\n'
+
+
+def test_link_latest_run_log_deletes_its_temporary_link_when_the_replace_fails(tmp_path, monkeypatch):
+    logfile = tmp_path / runLogName('r100-pc01', '20261001120000')
+    logfile.write_text('started\n')
+
+    def failing_replace(*args, **kwargs):
+        raise PermissionError('read-only')
+
+    monkeypatch.setattr(os, 'replace', failing_replace)
+    with pytest.raises(PermissionError):
+        linkLatestRunLog(str(tmp_path), 'r100-pc01', str(logfile))
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith('.tmp')] == []
+
+
+def test_prune_run_logs_keeps_the_latest_log_link(tmp_path):
+    old = tmp_path / runLogName('r100-pc01', '20200101000000')
+    old.write_text('old\n')
+    linkLatestRunLog(str(tmp_path), 'r100-pc01', str(old))
+    os.utime(old, (1, 1))
+    assert pruneRunLogs(str(tmp_path)) == 1
+    assert os.path.islink(tmp_path / 'r100-pc01.linbo-remote')
+
+
+def test_link_latest_run_log_for_two_hosts_is_independent(tmp_path):
+    a = tmp_path / runLogName('r100-pc01', '20261001120000')
+    b = tmp_path / runLogName('r100-pc02', '20261001120000')
+    a.write_text('a\n')
+    b.write_text('b\n')
+    linkLatestRunLog(str(tmp_path), 'r100-pc01', str(a))
+    linkLatestRunLog(str(tmp_path), 'r100-pc02', str(b))
+    assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'a\n'
+    assert (tmp_path / 'r100-pc02.linbo-remote').read_text() == 'b\n'
