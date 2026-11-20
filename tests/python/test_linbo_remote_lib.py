@@ -5,6 +5,8 @@
 #                group/room/explicit-list host resolution, onboot
 #                command-file assembly, per-host script rendering and
 #                wake-on-LAN target resolution. See tests/python/README.md.
+# Signed-off by: thomas@linuxmuster.net
+# Assisted by  : Claude
 # Date         : 20261024
 #
 
