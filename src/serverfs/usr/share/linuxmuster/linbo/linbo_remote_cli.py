@@ -76,6 +76,9 @@ def printUsage(msg=None):
     print('                    would do on the client, without actually doing it')
     print('                    (no partitioning, syncing, image creation/upload,')
     print('                    reboot or halt). Requires "-c" or "-p".')
+    print(' --run-user <name>  Name recorded as the starter of a "-c" run in the run')
+    print('                    record (default: SUDO_USER or USER). For callers that')
+    print('                    act on behalf of someone else, e.g. linuxmuster-api.')
     print(' -g <group>         All hosts of this hostgroup will be processed.')
     print(' -i <i1,i2,...>     Single ip or hostname or comma separated list of ips')
     print('                    or hostnames of clients to be processed.')
@@ -303,11 +306,14 @@ def wakeHosts(hosts, school, between, use_bcaddr, is_direct, is_onboot):
 
 # --- direct command dispatch (-c) --------------------------------------------
 
-def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False):
+def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False, run_user=None):
     if wait:
         doWait(wait, f'Waiting {wait} second(s) for client(s) to boot', leading_blank_line=True)
 
     lib.pruneRunLogs(environment.LINBOLOGDIR)
+    run_started = time.localtime()
+    run_id = lib.newRunId(run_started, os.getpid())
+    run_user = run_user or os.environ.get('SUDO_USER') or os.environ.get('USER')
 
     print()
     print('Sending command(s) to:')
@@ -330,7 +336,9 @@ def sendCmds(hosts, commands, wait, secrets_uploaded, dry_run=False):
         logfile = os.path.join(
             environment.LINBOLOGDIR, lib.runLogName(host, time.strftime('%Y%m%d%H%M%S', started)),
         )
-        record_prefix = lib.buildRunRecordPrefix(host, commands, started, logfile, dry_run=dry_run)
+        record_prefix = lib.buildRunRecordPrefix(
+            host, commands, started, logfile, dry_run=dry_run, run_id=run_id, user=run_user,
+        )
         script_path = os.path.join(TMPDIR, f'{os.getpid()}.{host}.sh')
 
         script_text = lib.renderRemoteScript(
@@ -407,7 +415,7 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
 
     try:
-        opts, _ = getopt.getopt(argv, 'a:b:c:dg:hi:lnp:r:uw:s:', ['dry-run'])
+        opts, _ = getopt.getopt(argv, 'a:b:c:dg:hi:lnp:r:uw:s:', ['dry-run', 'run-user='])
     except getopt.GetoptError as error:
         usageError(str(error))
         return 1  # unreachable, keeps type-checkers happy
@@ -423,6 +431,7 @@ def main(argv=None):
     noauto = False
     onboot_cmds = None
     room = None
+    run_user = None
     school = 'default-school'
     use_bcaddr = False
     wait_raw = None
@@ -443,6 +452,8 @@ def main(argv=None):
             disablegui = True
         elif opt == '--dry-run':
             dry_run = True
+        elif opt == '--run-user':
+            run_user = val
         elif opt == '-g':
             group = val
         elif opt == '-i':
@@ -561,7 +572,7 @@ def main(argv=None):
 
     # --- dispatch -------------------------------------------------------------
     if is_direct:
-        sendCmds(hosts, parsed_cmds, wait, needs_secrets, dry_run=dry_run)
+        sendCmds(hosts, parsed_cmds, wait, needs_secrets, dry_run=dry_run, run_user=run_user)
     if is_onboot and wait:
         testOnboot(hosts, wait)
     elif not is_onboot and not is_direct and wait:
