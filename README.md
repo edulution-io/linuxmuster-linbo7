@@ -1,9 +1,16 @@
+> [!NOTE]
+> **This is the edulution fork of [linuxmuster-linbo7](https://github.com/linuxmuster/linuxmuster-linbo7).**
+> We build on the great work of the linuxmuster.net community. Maintaining our own
+> fork gives us the flexibility to ship security fixes and new features to edulution
+> installations quickly, and we actively contribute our changes back to the community
+> project. The packages are published at [package.edulution.io](https://package.edulution.io).
+
 
 
 <img src="https://raw.githubusercontent.com/linuxmuster/linuxmuster-artwork/master/linbo/linbo_logo_small.svg" alt="linbo icon" width="200"/>
 
 # linuxmuster-linbo7
- is the free and opensource imaging solution for linuxmuster.net 7. It handles Windows 10 (TM) and Linux 64bit operating systems. Via TFTP and Grub's PXE implementation it boots a small linux system (linbofs) with a [gui](https://github.com/linuxmuster/linuxmuster-linbo-gui), which can manage all the imaging tasks on the client. Console tools are also available to manage clients and imaging remotely via the server.
+ is the free and opensource imaging solution for linuxmuster.net 7. It handles Windows 10 (TM) and Linux 64bit operating systems. Via TFTP and Grub's PXE implementation it boots a small linux system (linbofs) with a [gui](https://github.com/edulution-io/edulution-linbo-gui), which can manage all the imaging tasks on the client. Console tools are also available to manage clients and imaging remotely via the server.
 
  ## Features
  * Uses stock ubuntu kernel (7.0.0).
@@ -92,12 +99,12 @@ Parameter  |  Description
 `dhcpretry_wifi=<n>`  |  Retry time to get an ip address over wifi. If not set the `dhcpretry` value will be used.
 `efipxe`  |  Forces the efi bootorder to boot pxe first.
 `forcegrub`  |  Forces grub boot with windows uefi systems (in case of uefi boot issues).
-`linbocmd=cmd1,cmd2,...`  |  Provide [linbo-remote](https://github.com/linuxmuster/linuxmuster-linbo7/blob/main/README.md#linbo-remote) commands to be processed during boot.
+`linbocmd=cmd1,cmd2,...`  |  Provide [linbo-remote](https://github.com/edulution-io/linuxmuster-linbo7/blob/main/README.md#linbo-remote) commands to be processed during boot.
 `loadmodules=mod1,mod2,...`  |  List of kernel modules to load on boot.
 `netwait=<n>`  |  Maximum seconds to wait for a network interface to appear before giving up on network setup (default 10). Only applies while no interface is present yet; useful for USB network adapters whose driver needs a few seconds after boot to enumerate the device.
 `noefibootmgr`  |  Skips providing the UEFI boot files and entries, if you need to organize them yourself or in case of boot issues.
-`nogui`  |  Does not start linbo_gui, provides a [nogui mode](https://github.com/linuxmuster/linuxmuster-linbo7?tab=readme-ov-file#nogui-mode) with a simple text console menu.
-`nomenu`  |  Suppresses the console menu in [nogui mode](https://github.com/linuxmuster/linuxmuster-linbo7?tab=readme-ov-file#nogui-mode) to provide a remote only mode.
+`nogui`  |  Does not start linbo_gui, provides a [nogui mode](https://github.com/edulution-io/linuxmuster-linbo7?tab=readme-ov-file#nogui-mode) with a simple text console menu.
+`nomenu`  |  Suppresses the console menu in [nogui mode](https://github.com/edulution-io/linuxmuster-linbo7?tab=readme-ov-file#nogui-mode) to provide a remote only mode.
 `nowarmstart`  |  Suppresses linbo warmstart after downloading a new linbo kernel from the server (in case warmstart causes problems). Note: The old parameter `warmstart=no` is still functional for compatibility reasons.
 `restoremode`  |  Allows to control the writing performance of qemu-img when restoring whole partitions according to certain storage hardware. `restoremode=dd` uses the dd mode of qemu-img and may improve the writing performance to nvme disks. `restoremode=ooo` uses the out-of-order mode of qemu-img. This option may improve performance with other raw block devices.
 `quiet`  |  Suppresses kernel boot messages.
@@ -115,7 +122,11 @@ Parameter  |  Description
   ```
 * The option `-c` now disables the gui by default during command execution. 
 * The new option `-a` allows to attach a host's tmux session.
-* Every `-c` run writes its own log `<hostname>_linbo-remote_<YYYYmmddHHMMSS>.log` and appends one JSON line (hostname, mode, commands, dry_run, start, end, rc, log) to `linbo-remote_runs.jsonl`, both in `/var/log/linuxmuster/linbo/`.
+* Every `-c` run writes its own log `<hostname>_linbo-remote_<YYYYmmddHHMMSS>.log` and appends one JSON line (v, run_id, user, hostname, mode, commands, dry_run, start, log, end, rc) to `linbo-remote_runs.jsonl`, both in `/var/log/linuxmuster/linbo/`.
+  * `v` is the schema version (1). `run_id` is the same for all host lines of one `linbo-remote` invocation, so a room or group run can be shown as one run. `user` is the `--run-user` value, otherwise `SUDO_USER` or `USER`, or `null`.
+  * `start` and `end` are ISO 8601 with a colon offset, e.g. `2026-10-01T12:05:30+02:00`.
+  * `rc` is the exit status of the remote script. For a backgrounded `start`, `reboot`, `halt` or `poweroff`, `0` only means the command was dispatched. A run ended by a signal is recorded with 128 plus the signal number (129, 130, 143).
+  * `<hostname>.linbo-remote` in the same directory is a symlink to the newest run's log of that host, for readers that open the old per-host name.
 * New in 7.4.21: `image_name:<name>` creates and uploads a base image under a new name, see [Images under a new name](#images-under-a-new-name):
   ```
   linbo-remote -i <hostname> -c image_name:<name>,create_image:<#>,upload_image:<#>
@@ -141,6 +152,9 @@ Options:
                     would do on the client, without actually doing it
                     (no partitioning, syncing, image creation/upload,
                     reboot or halt). Requires "-c" or "-p".
+ --run-user <name>  Name recorded as the starter of a "-c" run in the run
+                    record (default: SUDO_USER or USER). For callers that
+                    act on behalf of someone else, e.g. linuxmuster-api.
  -g <group>         All hosts of this hostgroup will be processed.
  -i <i1,i2,...>     Single ip or hostname or comma separated list of ips
                     or hostnames of clients to be processed.
@@ -255,10 +269,10 @@ Note:
  * Recreates the Linbo filesystem and integrates various system specific customizations:
    * the linbo password hash (password taken from `/etc/rsyncd.secrets`),
    * the ssh public key of the server's root user,
-   * the kernel defined in `/etc/linuxmuster/linbo/custom_kernel` (see [Integrate your own kernel](https://github.com/linuxmuster/linuxmuster-linbo7/blob/main/README.md#integrate-your-own-kernel)),
-   * firmware defined in `/etc/linuxmuster/linbo/firmware` (see [Adding firmware](https://github.com/linuxmuster/linuxmuster-linbo7/blob/main/README.md#adding-firmware)),
-   * your own Linbo boot scripts (see [Execute your own boot scripts](https://github.com/linuxmuster/linuxmuster-linbo7#execute-your-own-boot-scripts)),
-   * your own linbofs modifications (see [Customize the Linbo filesystem](https://github.com/linuxmuster/linuxmuster-linbo7#customize-the-linbo-filesystem)).
+   * the kernel defined in `/etc/linuxmuster/linbo/custom_kernel` (see [Integrate your own kernel](https://github.com/edulution-io/linuxmuster-linbo7/blob/main/README.md#integrate-your-own-kernel)),
+   * firmware defined in `/etc/linuxmuster/linbo/firmware` (see [Adding firmware](https://github.com/edulution-io/linuxmuster-linbo7/blob/main/README.md#adding-firmware)),
+   * your own Linbo boot scripts (see [Execute your own boot scripts](https://github.com/edulution-io/linuxmuster-linbo7#execute-your-own-boot-scripts)),
+   * your own linbofs modifications (see [Customize the Linbo filesystem](https://github.com/edulution-io/linuxmuster-linbo7#customize-the-linbo-filesystem)).
  * Creates an ISO file under `/srv/linbo/linbo.iso` that allows you to create a bootable Linbo USB stick.
  * Allows to trigger custom actions on the server after `update-linbofs` has done it's job. Therefore you place a corresponding script in the directory `/var/lib/linuxmuster/hooks/update-linbofs.post.d`. Don't forget to make the script executable.
 
@@ -502,7 +516,7 @@ KERNELPATH="/path/to/my/kernelimage"
 MODULESPATH="/path/to/my/lib/modules/n.n.n"
 ```
 
-To apply your changes you have to execute `update-linbofs`. The example above points to the alternative Linbo legacy kernel image and modules. But you can use any other kernel, kernels delivered with the server or other distros or even one compiled on another machine and copied to the server. You only have to provide the paths to the kernel image and the modules directory. Note that your own kernel will be a much larger than the included linbo kernels and that you have to test it if it fits to your client hardware. With self-compiled Linbo kernels, art is to omit unneededed modules to optimize size. A starting point can be the [configuration file of the supplied kernel](https://github.com/linuxmuster/linuxmuster-linbo7/blob/main/build/config/kernel).
+To apply your changes you have to execute `update-linbofs`. The example above points to the alternative Linbo legacy kernel image and modules. But you can use any other kernel, kernels delivered with the server or other distros or even one compiled on another machine and copied to the server. You only have to provide the paths to the kernel image and the modules directory. Note that your own kernel will be a much larger than the included linbo kernels and that you have to test it if it fits to your client hardware. With self-compiled Linbo kernels, art is to omit unneededed modules to optimize size. A starting point can be the [configuration file of the supplied kernel](https://github.com/edulution-io/linuxmuster-linbo7/blob/main/build/config/kernel).
 
 ## Build environment
 

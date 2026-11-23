@@ -9,6 +9,7 @@
 # Date         : 20261001
 #
 
+import json
 import os
 import re
 from unittest.mock import MagicMock
@@ -188,6 +189,49 @@ def test_direct_dispatch_happy_path(monkeypatch, tmp_path, capsys):
     assert '"hostname":"r100-pc01"' in script_text
 
 
+def test_direct_dispatch_links_the_stable_log_name_to_the_run_log(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *a, **kw: MagicMock(returncode=0, stdout='12345\n'))
+
+    assert cli.main(['-i', 'r100-pc01', '-c', 'reboot']) == 0
+
+    link = tmp_path / 'r100-pc01.linbo-remote'
+    assert link.is_symlink()
+    assert re.fullmatch(r'r100-pc01_linbo-remote_\d{14}\.log', os.readlink(link))
+
+
+def test_a_failed_tmux_start_does_not_link_the_stable_log_name(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    previous = tmp_path / 'r100-pc01_linbo-remote_20261001120000.log'
+    previous.write_text('running\n')
+    (tmp_path / 'r100-pc01.linbo-remote').symlink_to(previous.name)
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *a, **kw: MagicMock(returncode=1, stdout=''))
+
+    cli.main(['-i', 'r100-pc01', '-c', 'reboot'])
+
+    assert os.readlink(tmp_path / 'r100-pc01.linbo-remote') == previous.name
+
+
+def test_a_failing_link_does_not_stop_the_run(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    monkeypatch.setattr(cli.subprocess, 'run', MagicMock(return_value=MagicMock(returncode=0, stdout='12345\n')))
+
+    def broken_link(*args, **kwargs):
+        raise PermissionError('read-only')
+
+    monkeypatch.setattr(cli.lib, 'linkLatestRunLog', broken_link)
+
+    assert cli.main(['-i', 'r100-pc01', '-c', 'reboot']) == 0
+    assert cli.subprocess.run.called
+    assert 'could not link the latest log of r100-pc01' in capsys.readouterr().err
+
+
 def test_direct_dispatch_dry_run_writes_dry_run_flag_into_script(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, 'isOnline', lambda host: True)
     monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
@@ -199,6 +243,46 @@ def test_direct_dispatch_dry_run_writes_dry_run_flag_into_script(monkeypatch, tm
     assert rc == 0
     script_path = tmp_path / f'{os.getpid()}.r100-pc01.sh'
     assert 'linbo_wrapper --dry-run reboot &' in script_path.read_text()
+
+
+def recordOf(tmp_path, host):
+    script_text = (tmp_path / f'{os.getpid()}.{host}.sh').read_text()
+    prefix = re.search(r"^RUN_RECORD='(.*)'$", script_text, re.MULTILINE).group(1)
+    return json.loads(prefix + '}')
+
+
+def dispatch(monkeypatch, tmp_path, argv):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *a, **kw: MagicMock(returncode=0, stdout='12345\n'))
+    return cli.main(argv)
+
+
+def test_direct_dispatch_hosts_of_one_run_share_the_run_id(monkeypatch, tmp_path):
+    assert dispatch(monkeypatch, tmp_path, ['-i', 'r100-pc01,r100-pc02', '-c', 'reboot']) == 0
+    first, second = recordOf(tmp_path, 'r100-pc01'), recordOf(tmp_path, 'r100-pc02')
+    assert first['run_id'] == second['run_id']
+    assert re.fullmatch(rf'\d{{14}}-{os.getpid()}', first['run_id'])
+    assert first['hostname'] != second['hostname']
+    assert first['v'] == 1
+
+
+def test_direct_dispatch_records_the_run_user_option(monkeypatch, tmp_path):
+    monkeypatch.setenv('SUDO_USER', 'sudoer')
+    argv = ['-i', 'r100-pc01', '-c', 'reboot', '--run-user', 'api-admin']
+    assert dispatch(monkeypatch, tmp_path, argv) == 0
+    assert recordOf(tmp_path, 'r100-pc01')['user'] == 'api-admin'
+
+
+def test_direct_dispatch_user_defaults_to_sudo_user_then_user(monkeypatch, tmp_path):
+    monkeypatch.setenv('SUDO_USER', 'sudoer')
+    monkeypatch.setenv('USER', 'root')
+    assert dispatch(monkeypatch, tmp_path, ['-i', 'r100-pc01', '-c', 'reboot']) == 0
+    assert recordOf(tmp_path, 'r100-pc01')['user'] == 'sudoer'
+    monkeypatch.delenv('SUDO_USER')
+    assert dispatch(monkeypatch, tmp_path, ['-i', 'r100-pc01', '-c', 'reboot']) == 0
+    assert recordOf(tmp_path, 'r100-pc01')['user'] == 'root'
 
 
 def test_direct_dispatch_offline_host_skipped(monkeypatch, capsys):
