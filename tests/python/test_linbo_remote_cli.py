@@ -189,6 +189,49 @@ def test_direct_dispatch_happy_path(monkeypatch, tmp_path, capsys):
     assert '"hostname":"r100-pc01"' in script_text
 
 
+def test_direct_dispatch_links_the_stable_log_name_to_the_run_log(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *a, **kw: MagicMock(returncode=0, stdout='12345\n'))
+
+    assert cli.main(['-i', 'r100-pc01', '-c', 'reboot']) == 0
+
+    link = tmp_path / 'r100-pc01.linbo-remote'
+    assert link.is_symlink()
+    assert re.fullmatch(r'r100-pc01_linbo-remote_\d{14}\.log', os.readlink(link))
+
+
+def test_a_failed_tmux_start_does_not_link_the_stable_log_name(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    previous = tmp_path / 'r100-pc01_linbo-remote_20261001120000.log'
+    previous.write_text('running\n')
+    (tmp_path / 'r100-pc01.linbo-remote').symlink_to(previous.name)
+    monkeypatch.setattr(cli.subprocess, 'run', lambda *a, **kw: MagicMock(returncode=1, stdout=''))
+
+    cli.main(['-i', 'r100-pc01', '-c', 'reboot'])
+
+    assert os.readlink(tmp_path / 'r100-pc01.linbo-remote') == previous.name
+
+
+def test_a_failing_link_does_not_stop_the_run(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, 'isOnline', lambda host: True)
+    monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))
+    monkeypatch.setattr(cli, 'TMPDIR', str(tmp_path))
+    monkeypatch.setattr(cli.subprocess, 'run', MagicMock(return_value=MagicMock(returncode=0, stdout='12345\n')))
+
+    def broken_link(*args, **kwargs):
+        raise PermissionError('read-only')
+
+    monkeypatch.setattr(cli.lib, 'linkLatestRunLog', broken_link)
+
+    assert cli.main(['-i', 'r100-pc01', '-c', 'reboot']) == 0
+    assert cli.subprocess.run.called
+    assert 'could not link the latest log of r100-pc01' in capsys.readouterr().err
+
+
 def test_direct_dispatch_dry_run_writes_dry_run_flag_into_script(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(cli, 'isOnline', lambda host: True)
     monkeypatch.setattr(cli.environment, 'LINBOLOGDIR', str(tmp_path))

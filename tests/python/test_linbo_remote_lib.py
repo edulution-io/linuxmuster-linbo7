@@ -29,6 +29,8 @@ from linbo_remote_lib import (
     buildRunRecordPrefix,
     isoTimestamp,
     newRunId,
+    latestLogLinkName,
+    linkLatestRunLog,
     pruneRunLogs,
     getMacFromAd,
     getIpFromAd,
@@ -629,3 +631,65 @@ def test_prune_run_logs_removes_only_old_per_run_logs(tmp_path):
 
 def test_prune_run_logs_missing_dir_is_not_an_error(tmp_path):
     assert pruneRunLogs(str(tmp_path / 'nope')) == 0
+
+
+# --- stable <host>.linbo-remote name for readers of the old log layout ---------
+
+def test_latest_log_link_name():
+    assert latestLogLinkName('r100-pc01') == 'r100-pc01.linbo-remote'
+
+
+def test_link_latest_run_log_points_at_the_newest_log(tmp_path):
+    first = tmp_path / runLogName('r100-pc01', '20261001120000')
+    second = tmp_path / runLogName('r100-pc01', '20261001130000')
+    first.write_text('first run\n')
+    second.write_text('second run\n')
+    link = linkLatestRunLog(str(tmp_path), 'r100-pc01', str(first))
+    assert os.path.islink(link)
+    assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'first run\n'
+    linkLatestRunLog(str(tmp_path), 'r100-pc01', str(second))
+    assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'second run\n'
+    # relative target, no stale temporary link left behind
+    assert os.readlink(link) == second.name
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith('.tmp')] == []
+
+
+def test_link_latest_run_log_before_the_log_exists_is_dangling_not_an_error(tmp_path):
+    logfile = tmp_path / runLogName('r100-pc01', '20261001120000')
+    link = linkLatestRunLog(str(tmp_path), 'r100-pc01', str(logfile))
+    assert os.path.islink(link) and not os.path.exists(link)
+    logfile.write_text('started\n')
+    assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'started\n'
+
+
+def test_link_latest_run_log_deletes_its_temporary_link_when_the_replace_fails(tmp_path, monkeypatch):
+    logfile = tmp_path / runLogName('r100-pc01', '20261001120000')
+    logfile.write_text('started\n')
+
+    def failing_replace(*args, **kwargs):
+        raise PermissionError('read-only')
+
+    monkeypatch.setattr(os, 'replace', failing_replace)
+    with pytest.raises(PermissionError):
+        linkLatestRunLog(str(tmp_path), 'r100-pc01', str(logfile))
+    assert [p.name for p in tmp_path.iterdir() if p.name.endswith('.tmp')] == []
+
+
+def test_prune_run_logs_keeps_the_latest_log_link(tmp_path):
+    old = tmp_path / runLogName('r100-pc01', '20200101000000')
+    old.write_text('old\n')
+    linkLatestRunLog(str(tmp_path), 'r100-pc01', str(old))
+    os.utime(old, (1, 1))
+    assert pruneRunLogs(str(tmp_path)) == 1
+    assert os.path.islink(tmp_path / 'r100-pc01.linbo-remote')
+
+
+def test_link_latest_run_log_for_two_hosts_is_independent(tmp_path):
+    a = tmp_path / runLogName('r100-pc01', '20261001120000')
+    b = tmp_path / runLogName('r100-pc02', '20261001120000')
+    a.write_text('a\n')
+    b.write_text('b\n')
+    linkLatestRunLog(str(tmp_path), 'r100-pc01', str(a))
+    linkLatestRunLog(str(tmp_path), 'r100-pc02', str(b))
+    assert (tmp_path / 'r100-pc01.linbo-remote').read_text() == 'a\n'
+    assert (tmp_path / 'r100-pc02.linbo-remote').read_text() == 'b\n'
