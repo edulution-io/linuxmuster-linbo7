@@ -19,7 +19,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/linuxmuster/lmndev-runner:latest
+      image: ghcr.io/edulution-io/lmndev-runner:latest
       options: --user root
     strategy:
       matrix:

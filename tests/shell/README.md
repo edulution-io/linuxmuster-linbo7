@@ -22,7 +22,7 @@ Or via the `lmndev-runner` container, which has both:
 
 ```sh
 docker run --rm -v "$PWD:/workspace/build:ro" -w /workspace/build \
-  ghcr.io/linuxmuster/lmndev-runner:latest sh tests/shell/run.sh
+  ghcr.io/edulution-io/lmndev-runner:latest sh tests/shell/run.sh
 ```
 
 ## How it works
