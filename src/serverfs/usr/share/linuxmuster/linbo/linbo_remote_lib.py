@@ -470,7 +470,9 @@ def pruneRunLogs(logdir, max_age_days=RUN_LOG_RETENTION_DAYS, now=None):
     return removed
 
 
-RUN_RECORD_VERSION = 1
+# 1: one line per host when its run ends.
+# 2: in addition, a start line per host when its run begins (no end, no rc).
+RUN_RECORD_VERSION = 2
 
 
 def isoTimestamp(started):
@@ -491,9 +493,10 @@ def buildRunRecordPrefix(hostname, commands, started, logfile, mode='direct', dr
     """
     The static part of one run's record (see renderRemoteScript()'s
     record_file): a JSON object *without* its closing brace. The remote
-    script appends `,"end":...,"rc":...}` when it exits, because only it
-    knows the end time and exit status. `started` is a local
-    time.struct_time; the record is one line in LINBOLOGDIR/RUN_RECORD_BASENAME.
+    script writes it twice to LINBOLOGDIR/RUN_RECORD_BASENAME: closed with `}`
+    as the start line when it begins, and with `,"end":...,"rc":...}` as the
+    end line when it exits, because only it knows the end time and exit
+    status. `started` is a local time.struct_time.
 
     Fields: `v` (schema version, RUN_RECORD_VERSION), `run_id` (shared by all
     host lines of one invocation), `user` (who started the run, or null),
@@ -553,12 +556,17 @@ def renderRemoteScript(hostname, commands, script_path, secrets_uploaded=False, 
         exactly where you don't want a real reboot while testing) so it just
         reports what it would do instead of actually doing it. See
         linbo_wrapper's own --dry-run handling.
-    record_file/record_prefix: when both are given, an EXIT trap appends one
-        JSON line to record_file - record_prefix (buildRunRecordPrefix())
-        plus the end time and the script's exit status. A trap, so that an
-        aborted run (e.g. its tmux session being killed) leaves a record too,
-        with the 128+signal exit status.
-        The append is serialized with flock, as parallel runs share the file.
+    record_file/record_prefix: when both are given, the script appends two
+        JSON lines to record_file. The start line - record_prefix
+        (buildRunRecordPrefix()) closed as it is, without end and rc - goes
+        first, so a reader sees a host whose run is still under way. The
+        end line - record_prefix plus the end time and the script's exit
+        status - comes from an EXIT trap, so that an aborted run (e.g. its
+        tmux session being killed) leaves one too, with the 128+signal exit
+        status. The trap is installed before the start line is written, so
+        every start line gets its end line unless the script is killed with
+        SIGKILL or the server goes down.
+        Both appends are serialized with flock, as parallel runs share the file.
     """
     wrapper = f'{WRAPPER} --dry-run' if dry_run else WRAPPER
     lines = ['#!/bin/bash']
@@ -577,6 +585,7 @@ def renderRemoteScript(hostname, commands, script_path, secrets_uploaded=False, 
             "trap 'exit 130' INT",
             "trap 'exit 143' TERM",
             'trap writeRunRecord EXIT',
+            '{ flock 9 && printf \'%s}\\n\' "$RUN_RECORD" >&9; } 2>/dev/null 9>>"$RUN_RECORD_FILE"',
         ]
     lines += [f'{SSH_CMD} {hostname} gui_ctl disable', 'RC=0']
     has_backgrounded = False

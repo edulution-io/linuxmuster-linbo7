@@ -496,7 +496,7 @@ def test_run_record_prefix_carries_schema_version_run_id_and_user():
     prefix = buildRunRecordPrefix('r100-pc01', ['sync:1'], STARTED, '/log/x.log',
                                   run_id='20261001120530-4711', user='alice')
     record = json.loads(prefix + '}')
-    assert record['v'] == RUN_RECORD_VERSION == 1
+    assert record['v'] == RUN_RECORD_VERSION == 2
     assert record['run_id'] == '20261001120530-4711'
     assert record['user'] == 'alice'
 
@@ -543,6 +543,17 @@ def test_render_remote_script_with_record_installs_exit_trap_first():
     )
 
 
+def test_render_remote_script_writes_the_start_line_after_the_trap_and_before_any_command():
+    script = renderRemoteScript(
+        'r100-pc01', ['sync:1'], '/var/tmp/x.sh',
+        record_file='/log/' + RUN_RECORD_BASENAME, record_prefix='{"hostname":"r100-pc01"',
+    )
+    lines = script.splitlines()
+    start_line = next(i for i, line in enumerate(lines) if 'printf \'%s}\\n\'' in line)
+    assert lines.index('trap writeRunRecord EXIT') < start_line
+    assert start_line < next(i for i, line in enumerate(lines) if 'gui_ctl disable' in line)
+
+
 needs_bash_flock = pytest.mark.skipif(
     not (shutil.which('bash') and shutil.which('flock')), reason='needs bash and flock',
 )
@@ -567,11 +578,13 @@ def test_run_record_written_on_success(monkeypatch, tmp_path):
     rc, record_file = runRenderedScript(monkeypatch, tmp_path, 'true', ['sync:1'])
     assert rc == 0
     lines = record_file.read_text().splitlines()
-    assert len(lines) == 1
-    record = json.loads(lines[0])
-    assert record['rc'] == 0
-    assert record['commands'] == ['sync:1']
-    assert re.fullmatch(ISO_WITH_COLON_OFFSET, record['end'])
+    assert len(lines) == 2
+    start, end = (json.loads(line) for line in lines)
+    assert 'end' not in start and 'rc' not in start
+    assert start == {k: v for k, v in end.items() if k not in ('end', 'rc')}
+    assert end['rc'] == 0
+    assert end['commands'] == ['sync:1']
+    assert re.fullmatch(ISO_WITH_COLON_OFFSET, end['end'])
 
 
 @needs_bash_flock
@@ -580,7 +593,7 @@ def test_run_record_written_on_failure_and_appended(monkeypatch, tmp_path):
     rc, record_file = runRenderedScript(monkeypatch, tmp_path, 'false', ['sync:1'])
     assert rc == 1
     records = [json.loads(line) for line in record_file.read_text().splitlines()]
-    assert [r['rc'] for r in records] == [0, 1]
+    assert [r.get('rc') for r in records] == [None, 0, None, 1]
 
 
 @needs_bash_flock
@@ -600,10 +613,14 @@ def test_run_record_of_aborted_run_has_signal_exit_status(monkeypatch, tmp_path,
     ))
     proc = subprocess.Popen(['bash', str(script)], start_new_session=True)
     time.sleep(1)
+    # while the run is under way, only its start line is there
+    running = [json.loads(line) for line in record_file.read_text().splitlines()]
+    assert len(running) == 1 and 'rc' not in running[0]
     os.killpg(proc.pid, sig)    # whole group, like tmux does - kills the running child too
     proc.wait(timeout=10)
-    record = json.loads(record_file.read_text().splitlines()[0])
-    assert record['rc'] == expected_rc
+    start, end = (json.loads(line) for line in record_file.read_text().splitlines())
+    assert 'rc' not in start
+    assert end['rc'] == expected_rc
 
 
 # --- retention of per-run logs ----------------------------------------------
