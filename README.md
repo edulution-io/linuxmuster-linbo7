@@ -122,8 +122,10 @@ Parameter  |  Description
   ```
 * The option `-c` now disables the gui by default during command execution. 
 * The new option `-a` allows to attach a host's tmux session.
-* Every `-c` run writes its own log `<hostname>_linbo-remote_<YYYYmmddHHMMSS>.log` and appends one JSON line (v, run_id, user, hostname, mode, commands, dry_run, start, log, end, rc) to `linbo-remote_runs.jsonl`, both in `/var/log/linuxmuster/linbo/`.
-  * `v` is the schema version (1). `run_id` is the same for all host lines of one `linbo-remote` invocation, so a room or group run can be shown as one run. `user` is the `--run-user` value, otherwise `SUDO_USER` or `USER`, or `null`.
+* Every `-c` run writes its own log `<hostname>_linbo-remote_<YYYYmmddHHMMSS>.log` and appends two JSON lines per host to `linbo-remote_runs.jsonl`, both in `/var/log/linuxmuster/linbo/`:
+  * a start line when the host's run begins (v, run_id, user, hostname, mode, commands, dry_run, start, log), so a reader sees a host that is still running and can follow its log;
+  * an end line when it exits: the same fields plus `end` and `rc`. A host with a start line but no end line is still running, unless the server went down or its script was killed with SIGKILL.
+  * `v` is the schema version (2; version 1 wrote the end line only). `run_id` is the same for all host lines of one `linbo-remote` invocation, so a room or group run can be shown as one run. `user` is the `--run-user` value, otherwise `SUDO_USER` or `USER`, or `null`.
   * `start` and `end` are ISO 8601 with a colon offset, e.g. `2026-10-01T12:05:30+02:00`.
   * `rc` is the exit status of the remote script. For a backgrounded `start`, `reboot`, `halt` or `poweroff`, `0` only means the command was dispatched. A run ended by a signal is recorded with 128 plus the signal number (129, 130, 143).
   * `<hostname>.linbo-remote` in the same directory is a symlink to the newest run's log of that host, for readers that open the old per-host name.

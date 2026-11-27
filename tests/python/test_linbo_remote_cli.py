@@ -265,7 +265,7 @@ def test_direct_dispatch_hosts_of_one_run_share_the_run_id(monkeypatch, tmp_path
     assert first['run_id'] == second['run_id']
     assert re.fullmatch(rf'\d{{14}}-{os.getpid()}', first['run_id'])
     assert first['hostname'] != second['hostname']
-    assert first['v'] == 1
+    assert first['v'] == 2
 
 
 def test_direct_dispatch_records_the_run_user_option(monkeypatch, tmp_path):
